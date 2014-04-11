@@ -54,7 +54,7 @@ let indexedTextBlocks rawText =
                         | (false,_,_)    -> (false,lastIndex,list) ) (false,-1,[]) 
         yield list ]
                   
-rawTextASCII [|'\r'|] rawPDF |> indexedTextBlocks
+let textBlocks = rawTextASCII [|'\r'|] rawPDF |> indexedTextBlocks
 
 open System.Text.RegularExpressions
 
@@ -68,22 +68,48 @@ let (|CompiledMatch|_|) pattern input =
         else None
 
 /// extract text 'Tj' method call parameter list
+/// (write parse error message to stderr)
 let textOfTjCall (Tj: string) =
     let test1 = (|CompiledMatch|_|) @"\((?<text>.*)\)\s*T[j|J]" Tj
-    let test2 = (|CompiledMatch|_|) @"\[(?<text>.*)\]\s*T[j|J]" Tj
     let res1 =    
         match test1 with
-        | Some [x;y] -> (y.Value).ToCharArray()
-        | _ as x -> [||]
-    let res2 =    
-        match test2 with
-        | Some [x;y] -> (y.Value).ToCharArray()
-        | _ as x -> [||]
-    res1.ToString() //+ res2
+        | Some [x;y] -> (y.Value)
+        | _ as x -> ""
+    if res1 <> "" then res1
+    else 
+        let test2 = (|CompiledMatch|_|) @"\[(?<text>.*)\]\s*T[j|J]" Tj
+        let res2 =    
+            match test2 with
+            | Some [x;y] -> (y.Value).ToCharArray()
+            | _ as x -> [||]
+        let (_,_,x) = res2 
+                      |> Array.fold 
+                            (fun (read,escaped,acc) c -> 
+                                match (read,escaped,c) with
+                                | (false,false,'(') -> (true,false,acc)
+                                | (true,false,')') -> (false,false,acc)
+                                /// handle escaped paranthesis
+                                /// TODO: necessary to handle escaped brackets?
+                                | (true,true,'(') -> (true,false,acc+"(")
+                                | (true,true,')') -> (true,false,acc+")")
+                                /// other escaped characters are kept escaped
+                                | (true,true,_) -> (true,false,acc+"\\"+string(c))
+                                /// handle ecape mode
+                                | (true,false,'\\') -> (true,true,acc)
+                                /// read other characters
+                                | (true,false,_) -> (true,false, acc + string(c)) 
+                                | (false,false,_) -> (false,false,acc)
+                                /// never escape while not reading
+                                | (false,true,_) -> 
+                                    fprintf stderr "Error: ignored parse error at position %d" acc.Length;(false,false,acc)) 
+                            (false,false,"")
+                                
+        x
 
 let Tj1 = "(emphasize this )Tj"
 let Tj2 = "[(Not)-3(e)-3(: )-3(T)11(h)-3(i)-4(s)-6( )11(d)-3(o)-3(c)7(u)-3(m)6(e)-3(n)-3(ta)-5(t)11(i)-4(o)-3(n)-3( )11(i)-4(s)-6( )11(th)7(e)-3( )] TJ"
 
 let x1 = textOfTjCall Tj1
 let x2 = textOfTjCall Tj2
-let y =  new string([|'a'; 'b'|])
+
+
