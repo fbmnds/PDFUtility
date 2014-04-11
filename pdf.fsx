@@ -7,7 +7,8 @@ open PdfSharp.Pdf.Content.Objects
 open System.Text
 
 let directory = @"D:\projects\PDF\"
-let inputfile = directory + @"wadler87"+".pdf"
+let inputfile = directory + @"Fsharp_Succinctly"+".pdf"
+let outputfileRaw = inputfile + ".raw.txt"
 let outputfile = inputfile + ".txt"
 let rawPDF = PdfReader.Open(inputfile)
 
@@ -33,13 +34,18 @@ let rawTextUTF7 separator (rawPDF: PdfDocument) =
     let encoder = new System.Text.UTF7Encoding()
     rawTextEncoding encoder separator rawPDF
 
+/// UTF8 encoder 
+let rawTextUTF8 separator (rawPDF: PdfDocument) =
+    let encoder = new System.Text.UTF7Encoding()
+    rawTextEncoding encoder separator rawPDF
+
 /// save the raw text to disc for further analysis
-let printPDFToFile (rawToText: PdfDocument -> string [] list) rawPDF (filename: string)  = 
+let printRawPDFToFile (rawToText: PdfDocument -> string [] list) rawPDF (filename: string)  = 
     use outStream = new System.IO.StreamWriter(filename)
     rawPDF |> rawToText |> List.map System.String.Concat |> List.map outStream.WriteLine |> ignore
     outStream.Close()
 
-printPDFToFile (rawTextASCII [|'\r'|]) rawPDF outputfile
+printRawPDFToFile (rawTextUTF8 [|'\r'|]) rawPDF outputfileRaw
     
 /// extract the text blocks identified by PDF text markers 'BT' and 'ET',
 /// keep the order of text blocks as derived from the PDF format,
@@ -54,7 +60,7 @@ let indexedTextBlocks rawText =
                         | (false,_,_)    -> (false,lastIndex,list) ) (false,-1,[]) 
         yield list ]
                   
-let textBlocks = rawTextASCII [|'\r'|] rawPDF |> indexedTextBlocks
+let textBlocks = rawTextUTF7 [|'\r';'\n'|] rawPDF |> indexedTextBlocks
 
 open System.Text.RegularExpressions
 
@@ -77,7 +83,7 @@ let textOfTjCall (Tj: string) =
         | _ as x -> ""
     if res1 <> "" then res1
     else 
-        let test2 = (|CompiledMatch|_|) @"\[(?<text>.*)\]\s*T[j|J]" Tj
+        let test2 = (|CompiledMatch|_|) @"\n*\r*\s*\[(?<text>.*)\]\s*T[j|J]" Tj
         let res2 =    
             match test2 with
             | Some [x;y] -> (y.Value).ToCharArray()
@@ -107,9 +113,34 @@ let textOfTjCall (Tj: string) =
         x
 
 let Tj1 = "(emphasize this )Tj"
-let Tj2 = "[(Not)-3(e)-3(: )-3(T)11(h)-3(i)-4(s)-6( )11(d)-3(o)-3(c)7(u)-3(m)6(e)-3(n)-3(ta)-5(t)11(i)-4(o)-3(n)-3( )11(i)-4(s)-6( )11(th)7(e)-3( )] TJ"
+let Tj2 = "[(W)-22(h)13(a)13(t)6( )-4(I)-4(s)11( )-4(Fu)4(nc)13(t)-4(i)5(on)3(al)6( )-4(P)4(r)-3(o)13(g)-8(r)7(amm)-5(i)5(n)13(g)-8(?)] TJ"
 
 let x1 = textOfTjCall Tj1
 let x2 = textOfTjCall Tj2
 
+let textOfPage (indexedPageBlocks: (int*string) list) =
+    let (_,_,x) = 
+        indexedPageBlocks
+        |> List.fold 
+            (fun (rowno,row,list) (blockno,item) -> 
+                 if blockno = -1 then (0,(textOfTjCall item),[])
+                 else if blockno = rowno then (rowno,row+(textOfTjCall item),list)
+                 else (blockno,(textOfTjCall item),list@[row]))
+            (-1,"",[])
+    x
+
+let textOfDocument (indexedDocBlocks: (int*string) list list) =
+    indexedDocBlocks
+    |> List.map textOfPage
+
+let x3 = textBlocks |> textOfDocument
+
+/// save the PDF text to file
+let printPDFToFile (rawToText: PdfDocument -> string [] list) rawPDF (filename: string)  = 
+    use outStream = new System.IO.StreamWriter(filename)
+    rawTextUTF7 [|'\r';'\n'|] rawPDF |> indexedTextBlocks |> textOfDocument 
+    |> List.map System.String.Concat |> List.map outStream.WriteLine |> ignore
+    outStream.Close()
+    
+printPDFToFile (rawTextUTF8 [|'\r';'\n'|]) rawPDF outputfile
 
